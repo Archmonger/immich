@@ -1,4 +1,7 @@
 import { BadRequestException, Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
+import { createHash, randomUUID } from 'node:crypto';
+import { join } from 'node:path';
+import { pipeline } from 'node:stream/promises';
 import sanitize from 'sanitize-filename';
 import { StorageCore } from 'src/cores/storage.core';
 import { Asset, AuthSharedLink } from 'src/database';
@@ -16,6 +19,15 @@ import {
   AssetMediaSize,
   UploadFieldName,
 } from 'src/dtos/asset-media.dto';
+import {
+  AssetUploadChunkResponseDto,
+  AssetUploadCompleteDto,
+  AssetUploadInitDto,
+  AssetUploadInitResponseDto,
+  AssetUploadStatusResponseDto,
+  DEFAULT_UPLOAD_CHUNK_SIZE_BYTES,
+  UploadStatus,
+} from 'src/dtos/asset-upload.dto';
 import { AssetDownloadOriginalDto } from 'src/dtos/asset.dto';
 import { AuthDto } from 'src/dtos/auth.dto';
 import {
@@ -39,6 +51,30 @@ import { fromChecksum } from 'src/utils/request';
 
 export interface AssetMediaRedirectResponse {
   targetSize: AssetMediaSize | 'original';
+}
+
+export interface UploadSession {
+  /** Unique identifier for the upload session (the UUID used for the temp file) */
+  uploadId: string;
+  userId: string;
+  /** Original filename provided by the client */
+  filename: string;
+  fileSize: number;
+  checksum: Buffer;
+  chunkSize: number;
+  /** Total number of bytes received so far */
+  received: number;
+  status: UploadStatus;
+  /** Path to the part file being assembled on disk (also the final resting location) */
+  path: string;
+  createdAt: Date;
+  metadata?: AssetUploadInitDto['metadata'];
+  isFavorite?: boolean;
+  visibility?: AssetVisibility;
+  livePhotoVideoId?: string;
+  fileCreatedAt?: Date;
+  fileModifiedAt?: Date;
+  duration?: number;
 }
 
 @Injectable()
@@ -120,6 +156,202 @@ export class AssetMediaService extends BaseService {
     const uploadPath = `${uploadFolder}/${uploadFilename}`;
 
     await this.jobRepository.queue({ name: JobName.FileDelete, data: { files: [uploadPath] } });
+  }
+
+  /**
+   * In-memory store for active chunked upload sessions. Sessions are scoped to a single
+   * user and are cleaned up on completion/failure/cancellation. Because the server is a
+   * single stateless API process (with the important caveat that this state does not
+   * survive restarts or multiple replicas), chunked uploads are best completed promptly.
+   */
+  private readonly uploadSessions = new Map<string, UploadSession>();
+
+  private getUploadSession(auth: AuthDto, uploadId: string): UploadSession {
+    const session = this.uploadSessions.get(uploadId);
+    if (!session || session.userId !== auth.user.id) {
+      throw new NotFoundException('Upload session not found');
+    }
+    return session;
+  }
+
+  private deleteUploadSession(uploadId: string): void {
+    this.uploadSessions.delete(uploadId);
+  }
+
+  async initUpload(auth: AuthDto, dto: AssetUploadInitDto): Promise<AssetUploadInitResponseDto> {
+    auth = requireUploadAccess(auth);
+
+    // Reject non-asset file types early (mirrors the single-request path).
+    if (!mimeTypes.isAsset(dto.filename)) {
+      throw new BadRequestException(`Unsupported file type ${dto.filename}`);
+    }
+
+    // Duplicate detection before any bytes are transferred.
+    const existing = await this.getUploadAssetIdByChecksum(auth, dto.checksum);
+    if (existing) {
+      return {
+        uploadId: randomUUID(),
+        chunkSize: dto.chunkSize ?? DEFAULT_UPLOAD_CHUNK_SIZE_BYTES,
+        status: UploadStatus.COMPLETED,
+        duplicate: true,
+        assetId: existing.id,
+      };
+    }
+
+    const uploadId = randomUUID();
+    const chunkSize = Math.min(dto.chunkSize ?? DEFAULT_UPLOAD_CHUNK_SIZE_BYTES, DEFAULT_UPLOAD_CHUNK_SIZE_BYTES);
+
+    // Use the same nested upload folder scheme as the single-request path.
+    const folder = StorageCore.getNestedFolder(StorageFolder.Upload, auth.user.id, uploadId);
+    this.storageRepository.mkdirSync(folder);
+
+    const extension = getFilenameExtension(dto.filename);
+    const filename = sanitize(`${uploadId}${extension}`);
+    const tempPath = join(folder, filename);
+
+    const session: UploadSession = {
+      uploadId,
+      userId: auth.user.id,
+      filename: dto.filename,
+      fileSize: dto.fileSize,
+      checksum: fromChecksum(dto.checksum),
+      chunkSize,
+      received: 0,
+      status: UploadStatus.INITIALIZED,
+      path: tempPath,
+      createdAt: new Date(),
+      metadata: dto.metadata,
+      isFavorite: dto.isFavorite,
+      visibility: dto.visibility,
+      livePhotoVideoId: dto.livePhotoVideoId,
+      fileCreatedAt: dto.fileCreatedAt,
+      fileModifiedAt: dto.fileModifiedAt,
+      duration: dto.duration,
+    };
+
+    this.uploadSessions.set(uploadId, session);
+
+    return {
+      uploadId,
+      chunkSize,
+      status: UploadStatus.INITIALIZED,
+    };
+  }
+
+  async uploadChunk(
+    auth: AuthDto,
+    uploadId: string,
+    chunkIndex: number,
+    file: UploadFile,
+  ): Promise<AssetUploadChunkResponseDto> {
+    auth = requireUploadAccess(auth);
+    const session = this.getUploadSession(auth, uploadId);
+    if (session.status === UploadStatus.COMPLETED || session.status === UploadStatus.FAILED) {
+      throw new BadRequestException(`Upload session is already ${session.status}`);
+    }
+
+    try {
+      // Append the received chunk (already streamed to disk by the interceptor) to the session file.
+      const source = await this.storageRepository.createReadStream(file.originalPath);
+      const target = this.storageRepository.createAppendStream(session.path);
+      await pipelineStream(source.stream, target);
+
+      session.received += file.size;
+      session.status = session.received >= session.fileSize ? UploadStatus.COMPLETED : UploadStatus.IN_PROGRESS;
+
+      // Clean up the chunk temp file.
+      await this.storageRepository.unlink(file.originalPath).catch(() => {});
+
+      return {
+        uploadId,
+        chunkIndex,
+        received: session.received,
+        status: session.status,
+      };
+    } catch (error) {
+      await this.destroySession(session);
+      throw error;
+    }
+  }
+
+  getUploadStatus(auth: AuthDto, uploadId: string): Promise<AssetUploadStatusResponseDto> {
+    auth = requireUploadAccess(auth);
+    const session = this.getUploadSession(auth, uploadId);
+    return Promise.resolve({ uploadId, received: session.received, status: session.status });
+  }
+
+  async cancelUpload(auth: AuthDto, uploadId: string): Promise<void> {
+    auth = requireUploadAccess(auth);
+    const session = this.getUploadSession(auth, uploadId);
+    await this.destroySession(session);
+  }
+
+  async completeUpload(auth: AuthDto, uploadId: string, dto: AssetUploadCompleteDto): Promise<AssetMediaResponseDto> {
+    auth = requireUploadAccess(auth);
+    const session = this.getUploadSession(auth, uploadId);
+
+    if (session.status !== UploadStatus.COMPLETED) {
+      throw new BadRequestException('Upload is not complete');
+    }
+
+    // Verify the assembled file matches the declared size.
+    try {
+      const stat = await this.storageRepository.stat(session.path);
+      if (stat.size !== session.fileSize) {
+        throw new BadRequestException(`Upload size mismatch: expected ${session.fileSize}, received ${stat.size}`);
+      }
+    } catch (error: Error | any) {
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+      throw new BadRequestException('Upload file not found');
+    }
+
+    // Compute the checksum of the assembled file and compare with the declared checksum.
+    const checksum = await this.hashFile(session.path);
+    if (!checksum.equals(session.checksum)) {
+      await this.destroySession(session);
+      throw new BadRequestException('Upload checksum mismatch');
+    }
+
+    const file: UploadFile = {
+      uuid: session.uploadId,
+      checksum,
+      originalPath: session.path,
+      originalName: session.filename,
+      size: session.fileSize,
+    };
+
+    const assetDto: AssetMediaCreateDto = {
+      fileCreatedAt: dto.fileCreatedAt ?? session.fileCreatedAt ?? new Date(),
+      fileModifiedAt: dto.fileModifiedAt ?? session.fileModifiedAt ?? new Date(),
+      isFavorite: dto.isFavorite ?? session.isFavorite,
+      visibility: dto.visibility ?? session.visibility,
+      livePhotoVideoId: dto.livePhotoVideoId ?? session.livePhotoVideoId,
+      duration: dto.duration ?? session.duration,
+      metadata: dto.metadata ?? session.metadata,
+    };
+
+    try {
+      const response = await this.uploadAsset(auth, assetDto, file);
+      this.deleteUploadSession(uploadId);
+      return response;
+    } catch (error) {
+      await this.destroySession(session);
+      throw error;
+    }
+  }
+
+  private async destroySession(session: UploadSession): Promise<void> {
+    this.deleteUploadSession(session.uploadId);
+    await this.storageRepository.unlink(session.path).catch(() => {});
+  }
+
+  private async hashFile(filepath: string): Promise<Buffer> {
+    const hash = createHash('sha1');
+    const source = await this.storageRepository.createReadStream(filepath);
+    await pipelineStream(source.stream, hash);
+    return hash.digest();
   }
 
   async uploadAsset(
@@ -371,3 +603,7 @@ export class AssetMediaService extends BaseService {
     }
   }
 }
+
+const pipelineStream = async (source: NodeJS.ReadableStream, target: NodeJS.WritableStream): Promise<void> => {
+  await pipeline(source as any, target as any);
+};

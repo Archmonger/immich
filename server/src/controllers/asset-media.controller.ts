@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   HttpStatus,
@@ -28,6 +29,15 @@ import {
   AssetMediaOptionsDto,
   AssetMediaSize,
 } from 'src/dtos/asset-media.dto';
+import {
+  AssetUploadChunkResponseDto,
+  AssetUploadCompleteDto,
+  AssetUploadInitDto,
+  AssetUploadInitResponseDto,
+  AssetUploadStatusResponseDto,
+  UploadChunkParamDto,
+  UploadSessionParamDto,
+} from 'src/dtos/asset-upload.dto';
 import { AssetDownloadOriginalDto } from 'src/dtos/asset.dto';
 import { AuthDto } from 'src/dtos/auth.dto';
 import { ApiTag, ImmichHeader, Permission, RouteKey } from 'src/enum';
@@ -87,6 +97,81 @@ export class AssetMediaController {
     }
 
     return responseDto;
+  }
+
+  @Post('upload/init')
+  @Authenticated({ permission: Permission.AssetUpload, sharedLink: true })
+  @Endpoint({
+    summary: 'Initialize chunked upload',
+    description: 'Creates a new upload session for a chunked (resumable) upload of a large asset.',
+    history: new HistoryBuilder().added('v1').beta('v1').stable('v2'),
+  })
+  initUpload(@Auth() auth: AuthDto, @Body() dto: AssetUploadInitDto): Promise<AssetUploadInitResponseDto> {
+    return this.service.initUpload(auth, dto);
+  }
+
+  @Post('upload/:uploadId/chunk/:chunkIndex')
+  @Authenticated({ permission: Permission.AssetUpload, sharedLink: true })
+  @UseInterceptors(FileUploadInterceptor)
+  @ApiConsumes('multipart/form-data')
+  @Endpoint({
+    summary: 'Upload a chunk',
+    description: 'Uploads a single chunk of a chunked upload. Chunks are appended in order.',
+    history: new HistoryBuilder().added('v1').beta('v1').stable('v2'),
+  })
+  uploadChunk(
+    @Auth() auth: AuthDto,
+    @Param() { uploadId, chunkIndex }: UploadChunkParamDto,
+    @UploadedFiles(new ParseFilePipe({ validators: [new FileNotEmptyValidator(['assetData'])] })) files: UploadFiles,
+  ): Promise<AssetUploadChunkResponseDto> {
+    const { file } = getFiles(files);
+    return this.service.uploadChunk(auth, uploadId, chunkIndex, file);
+  }
+
+  @Post('upload/:uploadId/complete')
+  @Authenticated({ permission: Permission.AssetUpload, sharedLink: true })
+  @Endpoint({
+    summary: 'Complete chunked upload',
+    description: 'Finalizes a chunked upload by verifying the assembled file and creating the asset.',
+    history: new HistoryBuilder().added('v1').beta('v1').stable('v2'),
+  })
+  completeUpload(
+    @Auth() auth: AuthDto,
+    @Param() { uploadId }: UploadSessionParamDto,
+    @Body() dto: AssetUploadCompleteDto,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<AssetMediaResponseDto> {
+    return this.service.completeUpload(auth, uploadId, dto).then((responseDto) => {
+      if (responseDto.status === AssetMediaStatus.DUPLICATE) {
+        res.status(HttpStatus.OK);
+      }
+      return responseDto;
+    });
+  }
+
+  @Get('upload/:uploadId/status')
+  @Authenticated({ permission: Permission.AssetUpload, sharedLink: true })
+  @Endpoint({
+    summary: 'Get chunked upload status',
+    description: 'Returns the current status and received byte count for a chunked upload.',
+    history: new HistoryBuilder().added('v1').beta('v1').stable('v2'),
+  })
+  getUploadStatus(
+    @Auth() auth: AuthDto,
+    @Param() { uploadId }: UploadSessionParamDto,
+  ): Promise<AssetUploadStatusResponseDto> {
+    return this.service.getUploadStatus(auth, uploadId);
+  }
+
+  @Delete('upload/:uploadId')
+  @Authenticated({ permission: Permission.AssetUpload, sharedLink: true })
+  @Endpoint({
+    summary: 'Cancel chunked upload',
+    description: 'Cancels and cleans up a chunked upload session.',
+    history: new HistoryBuilder().added('v1').beta('v1').stable('v2'),
+  })
+  cancelUpload(@Auth() auth: AuthDto, @Param() { uploadId }: UploadSessionParamDto): Promise<void> {
+    return this.service.cancelUpload(auth, uploadId);
   }
 
   @Get(':id/original')
