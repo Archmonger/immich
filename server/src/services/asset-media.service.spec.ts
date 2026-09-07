@@ -625,12 +625,23 @@ describe(AssetMediaService.name, () => {
 
       const asset = AssetFactory.create();
       mocks.access.asset.checkOwnerAccess.mockResolvedValue(new Set([authStub.admin.user.id]));
-      mocks.asset.create.mockResolvedValue(asset);
+      mocks.asset.create.mockImplementation(async (dto: any) => {
+        // The asset's originalPath is the assembled session path; capture it to verify
+        // the file is preserved (not unlinked) on success.
+        expect(dto.originalPath).toBeDefined();
+        return asset;
+      });
 
       await expect(sut.completeUpload(authStub.admin, uploadId, {})).resolves.toEqual({
         id: asset.id,
         status: AssetMediaStatus.CREATED,
       });
+
+      // On successful completion the assembled file is owned by the new asset, so it
+      // must be preserved (not unlinked). The only unlink allowed is the chunk-temp
+      // cleanup for the uploaded chunk file.
+      const unlinked = mocks.storage.unlink.mock.calls.map(([p]: any) => p);
+      expect(unlinked).toEqual(['/path/to/chunk.jpg']);
     });
 
     it('should throw on checksum mismatch', async () => {

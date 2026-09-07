@@ -352,17 +352,22 @@ export class AssetMediaService extends BaseService {
 
     try {
       const response = await this.uploadAsset(auth, assetDto, file);
-      await this.destroySession(auth, session);
+
+      // The assembled file is now owned by the created asset (its originalPath is
+      // session.path), so on success we only drop the session row and preserve the file.
+      await this.destroySession(auth, session, { deleteFile: false });
       return response;
     } catch (error) {
-      await this.destroySession(auth, session);
+      await this.destroySession(auth, session, { deleteFile: true });
       throw error;
     }
   }
 
-  private async destroySession(auth: AuthDto, session: UploadSession): Promise<void> {
+  private async destroySession(auth: AuthDto, session: UploadSession, options: { deleteFile?: boolean } = {}): Promise<void> {
     await this.uploadSessionRepository.delete(session.uploadId).catch(() => {});
-    await this.storageRepository.unlink(session.path).catch(() => {});
+    if (options.deleteFile !== false) {
+      await this.storageRepository.unlink(session.path).catch(() => {});
+    }
   }
 
   private async hashFile(filepath: string): Promise<Buffer> {
