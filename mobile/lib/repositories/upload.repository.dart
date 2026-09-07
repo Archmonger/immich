@@ -211,6 +211,7 @@ class UploadRepository {
     required List<int> bytes,
     required String uploadId,
     required String savedEndpoint,
+    required String originalFileName,
     required Completer<void>? cancelToken,
     void Function(int bytes, int totalBytes)? onProgress,
     required String logContext,
@@ -218,14 +219,18 @@ class UploadRepository {
   }) async {
     final client = httpClient ?? NetworkRepository.client;
 
-    // Upload a single chunk as multipart form data.
+    // Upload a single chunk as multipart form data. The filename must be
+    // provided so the server's asset-type validation (canUploadFile) accepts
+    // the chunk; without it the part has no filename and is rejected.
     final request = ProgressMultipartRequest(
       'POST',
       Uri.parse('$savedEndpoint/assets/upload/$uploadId/chunk/$chunkIndex'),
       abortTrigger: cancelToken?.future,
       onProgress: onProgress,
     );
-    request.files.add(MultipartFile('assetData', Stream.value(bytes), bytes.length));
+    request.files.add(
+      MultipartFile('assetData', Stream.value(bytes), bytes.length, filename: originalFileName),
+    );
 
     final response = await client.send(request);
     final responseBodyString = await response.stream.bytesToString();
@@ -307,6 +312,7 @@ class UploadRepository {
           bytes: chunk,
           uploadId: uploadId,
           savedEndpoint: savedEndpoint,
+          originalFileName: originalFileName,
           cancelToken: cancelToken,
           onProgress: onProgress != null ? (bytes, _) => onProgress(offset + bytes, fileSize) : null,
           logContext: logContext,

@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:background_downloader/background_downloader.dart';
-import 'package:drift/drift.dart';
+import 'package:drift/drift.dart' hide isNull;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -37,6 +37,7 @@ void main() {
     await StoreService.init(storeRepository: StoreRepository(db));
     await Store.put(StoreKey.serverEndpoint, 'http://demo.immich.app/api');
     registerFallbackValue(_FakeBaseRequest());
+    registerFallbackValue(Uri.parse('http://demo.immich.app/api'));
     file = File('${Directory.systemTemp.createTempSync().path}/photo.jpg')..writeAsStringSync('bytes');
   });
 
@@ -140,23 +141,29 @@ void main() {
         if (url.endsWith('/init')) {
           initBody = jsonDecode(body) as Map<String, dynamic>;
           return http.Response(
-            utf8.encode(
-              jsonEncode({
-                'uploadId': '11111111-1111-4111-8111-111111111111',
-                'chunkSize': 100 * 1024 * 1024,
-                'status': 'initialized',
-              }),
-            ),
+            jsonEncode({
+              'uploadId': '11111111-1111-4111-8111-111111111111',
+              'chunkSize': 100 * 1024 * 1024,
+              'status': 'initialized',
+            }),
             201,
           );
         }
         // complete endpoint
-        return http.Response(utf8.encode('{"id":"remote-1","status":"created"}'), 201);
+        return http.Response('{"id":"remote-1","status":"created"}', 201);
       },
     );
 
     // Chunk upload uses client.send.
-    when(() => client.send(any())).thenAnswer((_) async => response(201, '{}'));
+    final sentChunks = <http.MultipartRequest>[];
+    when(() => client.send(any())).thenAnswer((invocation) async {
+      final request = invocation.positionalArguments.single as http.BaseRequest;
+      if (request is http.MultipartRequest) {
+        sentChunks.add(request);
+      }
+      await request.finalize().drain<void>();
+      return response(201, '{}');
+    });
 
     final result = await sut.uploadFile(
       file: bigFile,
@@ -172,6 +179,14 @@ void main() {
     expect(initBody['checksum'], isA<String>());
     expect(initBody['checksum'], isNotEmpty);
     expect(initBody['fileSize'], 100 * 1024 * 1024 + 1);
+
+    // Each chunk part must carry the original filename so the server's asset-type
+    // validation (canUploadFile) accepts it (a nameless part is rejected as
+    // "Unsupported file type").
+    expect(sentChunks, isNotEmpty);
+    for (final chunk in sentChunks) {
+      expect(chunk.files.single.filename, 'big.jpg');
+    }
 
     bigFile.deleteSync();
   });
