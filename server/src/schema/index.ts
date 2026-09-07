@@ -82,6 +82,7 @@ import { SystemMetadataTable } from 'src/schema/tables/system-metadata.table';
 import { TagAssetTable } from 'src/schema/tables/tag-asset.table';
 import { TagClosureTable } from 'src/schema/tables/tag-closure.table';
 import { TagTable } from 'src/schema/tables/tag.table';
+import { UploadSessionTable } from 'src/schema/tables/upload-session.table';
 import { UserAuditTable } from 'src/schema/tables/user-audit.table';
 import { UserMetadataAuditTable } from 'src/schema/tables/user-metadata-audit.table';
 import { UserMetadataTable } from 'src/schema/tables/user-metadata.table';
@@ -152,6 +153,7 @@ export class ImmichDatabase {
     TagTable,
     TagAssetTable,
     TagClosureTable,
+    UploadSessionTable,
     UserAuditTable,
     UserMetadataTable,
     UserMetadataAuditTable,
@@ -283,6 +285,8 @@ export interface DB {
   user_audit: UserAuditTable;
   user_metadata: UserMetadataTable;
   user_metadata_audit: UserMetadataAuditTable;
+
+  upload_session: UploadSessionTable;
 
   version_history: VersionHistoryTable;
 

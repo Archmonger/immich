@@ -97,6 +97,48 @@ class UploadRepository {
     required String logContext,
     Client? httpClient,
   }) async {
+    final int fileSize;
+    try {
+      fileSize = await file.length();
+    } catch (e) {
+      return UploadResult.error(errorMessage: 'Unable to read file size: $e');
+    }
+
+    // Use the resumable/chunked upload protocol for files larger than the
+    // per-request body limit (e.g. Cloudflare's 100 MB cap).
+    if (fileSize > kChunkedUploadThresholdBytes) {
+      return _uploadChunked(
+        file: file,
+        originalFileName: originalFileName,
+        fields: fields,
+        fileSize: fileSize,
+        cancelToken: cancelToken,
+        onProgress: onProgress,
+        logContext: logContext,
+        httpClient: httpClient,
+      );
+    }
+
+    return _uploadSingle(
+      file: file,
+      originalFileName: originalFileName,
+      fields: fields,
+      cancelToken: cancelToken,
+      onProgress: onProgress,
+      logContext: logContext,
+      httpClient: httpClient,
+    );
+  }
+
+  Future<UploadResult> _uploadSingle({
+    required File file,
+    required String originalFileName,
+    required Map<String, String> fields,
+    required Completer<void>? cancelToken,
+    void Function(int bytes, int totalBytes)? onProgress,
+    required String logContext,
+    Client? httpClient,
+  }) async {
     final String savedEndpoint = Store.get(StoreKey.serverEndpoint);
 
     ProgressMultipartRequest buildRequest() {
@@ -157,6 +199,145 @@ class UploadRepository {
     } catch (error, stackTrace) {
       logger.warning("Error uploading $logContext: $error: $stackTrace");
       return UploadResult.error(errorMessage: error.toString());
+    }
+  }
+
+  Future<UploadResult> _uploadSingleChunk({
+    required int chunkIndex,
+    required List<int> bytes,
+    required String uploadId,
+    required String savedEndpoint,
+    required Completer<void>? cancelToken,
+    void Function(int bytes, int totalBytes)? onProgress,
+    required String logContext,
+    Client? httpClient,
+  }) async {
+    final client = httpClient ?? NetworkRepository.client;
+
+    // Upload a single chunk as multipart form data.
+    final request = ProgressMultipartRequest(
+      'POST',
+      Uri.parse('$savedEndpoint/assets/upload/$uploadId/chunk/$chunkIndex'),
+      abortTrigger: cancelToken?.future,
+      onProgress: onProgress,
+    );
+    request.files.add(MultipartFile('assetData', Stream.value(bytes), bytes.length));
+
+    final response = await client.send(request);
+    final responseBodyString = await response.stream.bytesToString();
+    if (![200, 201].contains(response.statusCode)) {
+      throw Exception('Chunk $chunkIndex upload failed with status ${response.statusCode}: $responseBodyString');
+    }
+  }
+
+  Future<UploadResult> _uploadChunked({
+    required File file,
+    required String originalFileName,
+    required Map<String, String> fields,
+    required int fileSize,
+    required Completer<void>? cancelToken,
+    void Function(int bytes, int totalBytes)? onProgress,
+    required String logContext,
+    Client? httpClient,
+  }) async {
+    final String savedEndpoint = Store.get(StoreKey.serverEndpoint);
+    final client = httpClient ?? NetworkRepository.client;
+
+    // Initialize the upload session.
+    final initBody = jsonEncode({
+      'filename': originalFileName,
+      'fileSize': fileSize,
+      'fileCreatedAt': fields['fileCreatedAt'],
+      'fileModifiedAt': fields['fileModifiedAt'],
+      'isFavorite': fields['isFavorite'] ?? 'false',
+      if (fields.containsKey('duration')) 'duration': fields['duration'],
+      if (fields.containsKey('visibility')) 'visibility': fields['visibility'],
+      if (fields.containsKey('metadata')) 'metadata': jsonDecode(fields['metadata']!),
+    });
+
+    final initResponse = await client.post(
+      Uri.parse('$savedEndpoint/assets/upload/init'),
+      headers: {'content-type': 'application/json'},
+      body: initBody,
+    );
+
+    if (initResponse.statusCode != 201 && initResponse.statusCode != 200) {
+      return UploadResult.error(
+        statusCode: initResponse.statusCode,
+        errorMessage: 'Failed to initialize upload: ${initResponse.body}',
+      );
+    }
+
+    final initJson = jsonDecode(initResponse.body) as Map<String, dynamic>;
+
+    // If the asset already exists, return the duplicate immediately.
+    final duplicate = initJson['duplicate'] as bool? ?? false;
+    final assetId = initJson['assetId'] as String?;
+    if (duplicate && assetId != null) {
+      return UploadResult.success(remoteAssetId: assetId);
+    }
+
+    final uploadId = initJson['uploadId'] as String;
+    final chunkSize = initJson['chunkSize'] as int;
+    final raw = await file.openRead().toBytes();
+
+    var chunkIndex = 0;
+    var offset = 0;
+    while (offset < fileSize) {
+      if (cancelToken?.isCompleted == true) {
+        return UploadResult.cancelled();
+      }
+
+      final end = (offset + chunkSize).clamp(0, fileSize).toInt();
+      final chunk = raw.sublist(offset, end);
+      try {
+        await _uploadSingleChunk(
+          chunkIndex: chunkIndex,
+          bytes: chunk,
+          uploadId: uploadId,
+          savedEndpoint: savedEndpoint,
+          cancelToken: cancelToken,
+          onProgress: onProgress != null ? (bytes, _) => onProgress(offset + bytes, fileSize) : null,
+          logContext: logContext,
+          httpClient: httpClient,
+        );
+      } on RequestAbortedException {
+        logger.warning("Upload $logContext was cancelled during chunk $chunkIndex");
+        return UploadResult.cancelled();
+      } on Exception catch (error) {
+        logger.warning("Error uploading chunk $chunkIndex for $logContext: $error");
+        return UploadResult.error(errorMessage: error.toString());
+      }
+
+      offset = end;
+      chunkIndex++;
+    }
+
+    // Complete the upload, passing back the fields that should override the init ones.
+    final completeResponse = await client.post(
+      Uri.parse('$savedEndpoint/assets/upload/$uploadId/complete'),
+      headers: {'content-type': 'application/json'},
+      body: jsonEncode({
+        if (fields['fileCreatedAt'] != null) 'fileCreatedAt': fields['fileCreatedAt'],
+        if (fields['fileModifiedAt'] != null) 'fileModifiedAt': fields['fileModifiedAt'],
+        if (fields['isFavorite'] != null) 'isFavorite': fields['isFavorite'],
+        if (fields.containsKey('duration')) 'duration': fields['duration'],
+        if (fields.containsKey('metadata')) 'metadata': jsonDecode(fields['metadata']!),
+      }),
+    );
+
+    if (completeResponse.statusCode != 201 && completeResponse.statusCode != 200) {
+      return UploadResult.error(
+        statusCode: completeResponse.statusCode,
+        errorMessage: 'Failed to complete upload: ${completeResponse.body}',
+      );
+    }
+
+    try {
+      final responseBody = jsonDecode(completeResponse.body);
+      return UploadResult.success(remoteAssetId: responseBody['id'] as String);
+    } catch (e) {
+      return UploadResult.error(errorMessage: 'Failed to parse server response');
     }
   }
 }

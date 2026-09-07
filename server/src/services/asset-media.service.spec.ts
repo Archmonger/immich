@@ -197,6 +197,26 @@ describe(AssetMediaService.name, () => {
 
   beforeEach(() => {
     ({ sut, mocks } = newTestService(AssetMediaService));
+
+    // In-memory fake of the upload_session repository for the chunked-upload tests.
+    const sessions = new Map<string, Record<string, any>>();
+    mocks.uploadSession.create.mockImplementation(((dto: any) => {
+      const session = { ...dto, createdAt: new Date(), updatedAt: new Date() };
+      sessions.set(dto.id, session);
+      return Promise.resolve(session);
+    }) as any);
+    mocks.uploadSession.get.mockImplementation(((_userId: string, id: string) =>
+      Promise.resolve(sessions.get(id))) as any);
+    mocks.uploadSession.update.mockImplementation(((id: string, dto: any) => {
+      const existing = sessions.get(id);
+      const updated = { ...existing, ...dto };
+      sessions.set(id, updated);
+      return Promise.resolve(updated);
+    }) as any);
+    mocks.uploadSession.delete.mockImplementation(((id: string) => {
+      sessions.delete(id);
+      return Promise.resolve();
+    }) as any);
   });
 
   describe('getUploadAssetIdByChecksum', () => {

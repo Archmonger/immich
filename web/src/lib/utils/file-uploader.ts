@@ -22,6 +22,9 @@ import { handleError } from './handle-error';
 
 export const uploadExecutionQueue = new ExecutorQueue({ concurrency: 2 });
 
+/** Files larger than this use the resumable/chunked upload protocol. */
+export const CHUNKED_UPLOAD_THRESHOLD_BYTES = 100 * 1024 * 1024;
+
 type FilePickerParam = { multiple?: boolean; extensions?: string[] };
 type FileUploadParam = { multiple?: boolean; albumId?: string };
 
@@ -137,6 +140,77 @@ function hashFile(file: File): Promise<string> {
   });
 }
 
+type UploadInitResponse = {
+  uploadId: string;
+  chunkSize: number;
+  status: AssetMediaStatus;
+  duplicate?: boolean;
+  assetId?: string;
+};
+
+async function uploadChunked(
+  assetFile: File,
+  deviceAssetId: string,
+  isLockedAssets = false,
+): Promise<{ id: string; status: AssetMediaStatus }> {
+  const base = getBaseUrl();
+  const params = asQueryString(authManager.params);
+  const suffix = params ? `?${params}` : '';
+
+  const checksum = await hashFile(assetFile);
+  const fileCreatedAt = new Date(assetFile.lastModified).toISOString();
+
+  const initResponse = await uploadRequest<UploadInitResponse>({
+    url: `${base}/assets/upload/init${suffix}`,
+    data: toFormData({
+      filename: assetFile.name,
+      fileSize: assetFile.size.toString(),
+      checksum,
+      fileCreatedAt,
+      fileModifiedAt: fileCreatedAt,
+      isFavorite: 'false',
+      ...(isLockedAssets ? { visibility: AssetVisibility.Locked } : {}),
+    }),
+  });
+
+  if (initResponse.data.duplicate && initResponse.data.assetId) {
+    return { id: initResponse.data.assetId, status: AssetMediaStatus.Duplicate };
+  }
+
+  const uploadId = initResponse.data.uploadId;
+  const chunkSize = initResponse.data.chunkSize;
+
+  let chunkIndex = 0;
+  for (let offset = 0; offset < assetFile.size; offset += chunkSize) {
+    const chunk = assetFile.slice(offset, Math.min(offset + chunkSize, assetFile.size));
+    await uploadRequest({
+      url: `${base}/assets/upload/${uploadId}/chunk/${chunkIndex}${suffix}`,
+      data: toFormData({ assetData: chunk }),
+      onUploadProgress: (event) => uploadAssetsStore.updateProgress(deviceAssetId, event.loaded, event.total),
+    });
+    chunkIndex++;
+  }
+
+  const completeResponse = await uploadRequest<AssetMediaResponseDto>({
+    url: `${base}/assets/upload/${uploadId}/complete${suffix}`,
+    data: toFormData({}),
+  });
+
+  return { id: completeResponse.data.id, status: completeResponse.data.status };
+}
+
+const toFormData = (fields: Record<string, unknown>): FormData => {
+  const formData = new FormData();
+  for (const [key, value] of Object.entries(fields)) {
+    if (value instanceof File || value instanceof Blob) {
+      formData.append(key, value, (value as File).name);
+    } else if (value !== undefined && value !== null) {
+      formData.append(key, String(value));
+    }
+  }
+  return formData;
+};
+
 type FileUploaderParams = {
   assetFile: File;
   albumId?: string;
@@ -200,17 +274,22 @@ async function fileUploader({
       const queryParams = asQueryString(authManager.params);
 
       uploadAssetsStore.updateItem(deviceAssetId, { message: $t('asset_uploading') });
-      const response = await uploadRequest<AssetMediaResponseDto>({
-        url: getBaseUrl() + '/assets' + (queryParams ? `?${queryParams}` : ''),
-        data: formData,
-        onUploadProgress: (event) => uploadAssetsStore.updateProgress(deviceAssetId, event.loaded, event.total),
-      });
 
-      if (![200, 201].includes(response.status)) {
-        throw new Error($t('errors.unable_to_upload_file'));
+      if (assetFile.size > CHUNKED_UPLOAD_THRESHOLD_BYTES && !authManager.isSharedLink) {
+        responseData = await uploadChunked(assetFile, deviceAssetId, isLockedAssets);
+      } else {
+        const response = await uploadRequest<AssetMediaResponseDto>({
+          url: getBaseUrl() + '/assets' + (queryParams ? `?${queryParams}` : ''),
+          data: formData,
+          onUploadProgress: (event) => uploadAssetsStore.updateProgress(deviceAssetId, event.loaded, event.total),
+        });
+
+        if (![200, 201].includes(response.status)) {
+          throw new Error($t('errors.unable_to_upload_file'));
+        }
+
+        responseData = response.data;
       }
-
-      responseData = response.data;
     }
 
     if (responseData.status === AssetMediaStatus.Duplicate) {

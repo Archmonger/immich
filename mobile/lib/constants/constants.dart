@@ -13,6 +13,10 @@ const int kFetchLocalAssetsBatchSize = 40000;
 final int kBatchHashFileLimit = Platform.isIOS ? 32 : 512;
 const int kBatchHashSizeLimit = 1024 * 1024 * 1024; // 1GB
 
+// Files larger than this are uploaded using the resumable/chunked protocol so
+// that each request stays below proxy body limits (e.g. Cloudflare's 100MB).
+const int kChunkedUploadThresholdBytes = 100 * 1024 * 1024;
+
 // Secure storage keys
 const String kSecuredPinCode = "secured_pin_code";
 

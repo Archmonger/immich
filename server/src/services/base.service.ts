@@ -54,6 +54,7 @@ import { SystemMetadataRepository } from 'src/repositories/system-metadata.repos
 import { TagRepository } from 'src/repositories/tag.repository';
 import { TelemetryRepository } from 'src/repositories/telemetry.repository';
 import { TrashRepository } from 'src/repositories/trash.repository';
+import { UploadSessionRepository } from 'src/repositories/upload-session.repository';
 import { UserRepository } from 'src/repositories/user.repository';
 import { VersionHistoryRepository } from 'src/repositories/version-history.repository';
 import { VideoStreamRepository } from 'src/repositories/video-stream.repository';
@@ -115,6 +116,7 @@ export const BASE_SERVICE_DEPENDENCIES = [
   TagRepository,
   TelemetryRepository,
   TrashRepository,
+  UploadSessionRepository,
   UserRepository,
   VersionHistoryRepository,
   VideoStreamRepository,
@@ -177,6 +179,7 @@ export class BaseService {
     protected tagRepository: TagRepository,
     protected telemetryRepository: TelemetryRepository,
     protected trashRepository: TrashRepository,
+    protected uploadSessionRepository: UploadSessionRepository,
     protected userRepository: UserRepository,
     protected versionRepository: VersionHistoryRepository,
     protected videoStreamRepository: VideoStreamRepository,
@@ -248,6 +251,7 @@ export class BaseService {
       ctx.tagRepository,
       ctx.telemetryRepository,
       ctx.trashRepository,
+      ctx.uploadSessionRepository,
       ctx.userRepository,
       ctx.versionRepository,
       ctx.videoStreamRepository,
