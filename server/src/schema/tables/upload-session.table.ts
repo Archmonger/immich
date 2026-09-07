@@ -48,7 +48,7 @@ export class UploadSessionTable {
   @Column({ nullable: true })
   visibility!: string | null;
 
-  @Column({ nullable: true })
+  @Column({ type: 'uuid', nullable: true })
   livePhotoVideoId!: string | null;
 
   @Column({ type: 'timestamp with time zone', nullable: true })
