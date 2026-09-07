@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:background_downloader/background_downloader.dart';
+import 'package:convert/convert.dart';
 import 'package:crypto/crypto.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:http/http.dart';
@@ -205,7 +206,7 @@ class UploadRepository {
     }
   }
 
-  Future<UploadResult> _uploadSingleChunk({
+  Future<void> _uploadSingleChunk({
     required int chunkIndex,
     required List<int> bytes,
     required String uploadId,
@@ -289,7 +290,7 @@ class UploadRepository {
 
     final uploadId = initJson['uploadId'] as String;
     final chunkSize = initJson['chunkSize'] as int;
-    final raw = await file.openRead().toBytes();
+    final raw = await file.readAsBytes();
 
     var chunkIndex = 0;
     var offset = 0;
@@ -298,7 +299,7 @@ class UploadRepository {
         return UploadResult.cancelled();
       }
 
-      final end = (offset + chunkSize).clamp(0, fileSize).toInt();
+      final end = (offset + chunkSize).clamp(0, fileSize);
       final chunk = raw.sublist(offset, end);
       try {
         await _uploadSingleChunk(
