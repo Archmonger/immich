@@ -162,7 +162,7 @@ async function uploadChunked(
 
   const initResponse = await uploadRequest<UploadInitResponse>({
     url: `${base}/assets/upload/init${suffix}`,
-    data: toFormData({
+    data: {
       filename: assetFile.name,
       fileSize: assetFile.size.toString(),
       checksum,
@@ -170,7 +170,7 @@ async function uploadChunked(
       fileModifiedAt: fileCreatedAt,
       isFavorite: 'false',
       ...(isLockedAssets ? { visibility: AssetVisibility.Locked } : {}),
-    }),
+    },
   });
 
   if (initResponse.data.duplicate && initResponse.data.assetId) {
@@ -193,7 +193,7 @@ async function uploadChunked(
 
   const completeResponse = await uploadRequest<AssetMediaResponseDto>({
     url: `${base}/assets/upload/${uploadId}/complete${suffix}`,
-    data: toFormData({}),
+    data: {},
   });
 
   return { id: completeResponse.data.id, status: completeResponse.data.status };
