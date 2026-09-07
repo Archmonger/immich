@@ -183,9 +183,10 @@ async function uploadChunked(
   let chunkIndex = 0;
   for (let offset = 0; offset < assetFile.size; offset += chunkSize) {
     const chunk = assetFile.slice(offset, Math.min(offset + chunkSize, assetFile.size));
+    const chunkFile = new File([chunk], assetFile.name, { type: assetFile.type });
     await uploadRequest({
       url: `${base}/assets/upload/${uploadId}/chunk/${chunkIndex}${suffix}`,
-      data: toFormData({ assetData: chunk }),
+      data: toFormData({ assetData: chunkFile }),
       onUploadProgress: (event) => uploadAssetsStore.updateProgress(deviceAssetId, event.loaded, event.total),
     });
     chunkIndex++;
