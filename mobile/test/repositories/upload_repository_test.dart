@@ -124,4 +124,55 @@ void main() {
     expect(result.errorMessage, 'boom');
     verify(() => client.send(any())).called(1);
   });
+
+  test('chunked upload init includes the file checksum', () async {
+    // Create a file large enough to trigger the chunked upload path.
+    final bigFile =
+        File('${Directory.systemTemp.createTempSync().path}/big.jpg')
+          ..writeAsStringSync('A' * (100 * 1024 * 1024 + 1));
+
+    // Capture the init body sent via client.post.
+    late Map<String, dynamic> initBody;
+    when(() => client.post(any(), headers: any(named: 'headers'), body: any(named: 'body'))).thenAnswer(
+      (invocation) async {
+        final String url = invocation.positionalArguments.single.toString();
+        final body = invocation.namedArguments[#body] as String;
+        if (url.endsWith('/init')) {
+          initBody = jsonDecode(body) as Map<String, dynamic>;
+          return http.Response(
+            utf8.encode(
+              jsonEncode({
+                'uploadId': '11111111-1111-4111-8111-111111111111',
+                'chunkSize': 100 * 1024 * 1024,
+                'status': 'initialized',
+              }),
+            ),
+            201,
+          );
+        }
+        // complete endpoint
+        return http.Response(utf8.encode('{"id":"remote-1","status":"created"}'), 201);
+      },
+    );
+
+    // Chunk upload uses client.send.
+    when(() => client.send(any())).thenAnswer((_) async => response(201, '{}'));
+
+    final result = await sut.uploadFile(
+      file: bigFile,
+      originalFileName: 'big.jpg',
+      fields: const {'deviceAssetId': 'a1'},
+      cancelToken: null,
+      logContext: 'a1',
+      httpClient: client,
+    );
+
+    expect(result.statusCode, isNull);
+    // The init body must include a checksum (server requires it for chunked uploads).
+    expect(initBody['checksum'], isA<String>());
+    expect(initBody['checksum'], isNotEmpty);
+    expect(initBody['fileSize'], 100 * 1024 * 1024 + 1);
+
+    bigFile.deleteSync();
+  });
 }

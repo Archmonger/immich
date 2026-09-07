@@ -374,6 +374,9 @@ class ForegroundUploadService {
         onProgress: onProgress != null
             ? (bytes, totalBytes) => onProgress(asset.localId!, originalFileName, bytes, totalBytes)
             : null,
+        // Pass the pre-computed base64 SHA1 checksum so the chunked upload path can
+        // initialize a session (the server requires it for duplicate detection).
+        checksum: asset.checksum,
         logContext: 'asset[${asset.localId}]',
       );
 

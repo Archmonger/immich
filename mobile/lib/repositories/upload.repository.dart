@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:background_downloader/background_downloader.dart';
+import 'package:crypto/crypto.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:http/http.dart';
 import 'package:immich_mobile/constants/constants.dart';
@@ -95,6 +96,7 @@ class UploadRepository {
     required Completer<void>? cancelToken,
     void Function(int bytes, int totalBytes)? onProgress,
     required String logContext,
+    String? checksum,
     Client? httpClient,
   }) async {
     final int fileSize;
@@ -115,6 +117,7 @@ class UploadRepository {
         cancelToken: cancelToken,
         onProgress: onProgress,
         logContext: logContext,
+        checksum: checksum,
         httpClient: httpClient,
       );
     }
@@ -238,15 +241,22 @@ class UploadRepository {
     required Completer<void>? cancelToken,
     void Function(int bytes, int totalBytes)? onProgress,
     required String logContext,
+    String? checksum,
     Client? httpClient,
   }) async {
     final String savedEndpoint = Store.get(StoreKey.serverEndpoint);
     final client = httpClient ?? NetworkRepository.client;
 
+    // The server requires the full file's SHA1 checksum when initializing a
+    // chunked upload (it uses it for duplicate detection and integrity checking
+    // at completion). Compute it from the file if the caller did not supply one.
+    final fileChecksum = checksum ?? await _sha1Base64(file);
+
     // Initialize the upload session.
     final initBody = jsonEncode({
       'filename': originalFileName,
       'fileSize': fileSize,
+      'checksum': fileChecksum,
       'fileCreatedAt': fields['fileCreatedAt'],
       'fileModifiedAt': fields['fileModifiedAt'],
       'isFavorite': fields['isFavorite'] ?? 'false',
@@ -339,6 +349,23 @@ class UploadRepository {
     } catch (e) {
       return UploadResult.error(errorMessage: 'Failed to parse server response');
     }
+  }
+
+  /// Computes the base64-encoded SHA1 checksum of [file], matching the format
+  /// the server expects for chunked upload init (see [fromChecksum] on the
+  /// server, which decodes 28-character strings as base64).
+  Future<String> _sha1Base64(File file) async {
+    final digest = await _sha1Digest(file);
+    return base64.encode(digest.bytes);
+  }
+
+  Future<Digest> _sha1Digest(File file) async {
+    final sink = AccumulatorSink<Digest>();
+    final input = file.openRead();
+    final output = sha1.startChunkedConversion(sink);
+    await input.forEach(output.add);
+    output.close();
+    return sink.events.single;
   }
 }
 
