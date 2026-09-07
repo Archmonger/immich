@@ -402,6 +402,15 @@ export type AdminConfigTrashDto = {
     /** Enabled */
     enabled: boolean;
 };
+export type AdminConfigChunkedUploadDto = {
+    /** Enable chunked/resumable uploads */
+    enabled?: boolean;
+    /** Maximum chunk size in bytes for chunked uploads */
+    maxChunkSize: number;
+};
+export type AdminConfigUploadDto = {
+    chunkedUpload: AdminConfigChunkedUploadDto;
+};
 export type AdminConfigUserDto = {
     /** Delete delay */
     deleteDelay: number;
@@ -428,6 +437,7 @@ export type AdminConfigDto = {
     templates: AdminConfigTemplatesDto;
     theme: AdminConfigThemeDto;
     trash: AdminConfigTrashDto;
+    upload: AdminConfigUploadDto;
     user: AdminConfigUserDto;
 };
 export type DatabaseBackupDeleteDto = {
@@ -1170,6 +1180,74 @@ export type AssetMetadataBulkResponseDto = {
         [key: string]: any;
     };
 };
+export type AssetUploadInitDto = {
+    /** Base64 or hex encoded SHA1 hash of the full file */
+    checksum: string;
+    /** Requested chunk size in bytes */
+    chunkSize?: number;
+    /** Duration in milliseconds (for videos) */
+    duration?: number;
+    /** File creation date */
+    fileCreatedAt: string;
+    /** File modification date */
+    fileModifiedAt: string;
+    /** Total size of the file in bytes */
+    fileSize: number;
+    /** Filename */
+    filename: string;
+    /** Mark as favorite */
+    isFavorite?: boolean;
+    /** Live photo video ID */
+    livePhotoVideoId?: string;
+    /** Asset metadata items */
+    metadata?: AssetMetadataUpsertItemDto[];
+    visibility?: AssetVisibility;
+};
+export type AssetUploadInitResponseDto = {
+    /** Existing asset ID if the upload is a duplicate */
+    assetId?: string;
+    /** Chunk size in bytes that the client should use */
+    chunkSize: number;
+    /** Whether the asset already exists on the server */
+    duplicate?: boolean;
+    /** Current status of the upload session */
+    status: Status;
+    /** Unique identifier for this upload session */
+    uploadId: string;
+};
+export type AssetUploadChunkResponseDto = {
+    /** Index of the chunk that was just uploaded */
+    chunkIndex: number;
+    /** Total bytes received so far for this upload */
+    received: number;
+    /** Current status of the upload session */
+    status: Status;
+    /** Unique identifier for this upload session */
+    uploadId: string;
+};
+export type AssetUploadCompleteDto = {
+    /** Duration in milliseconds (for videos) */
+    duration?: number;
+    /** File creation date */
+    fileCreatedAt?: string;
+    /** File modification date */
+    fileModifiedAt?: string;
+    /** Mark as favorite */
+    isFavorite?: boolean;
+    /** Live photo video ID */
+    livePhotoVideoId?: string;
+    /** Asset metadata items */
+    metadata?: AssetMetadataUpsertItemDto[];
+    visibility?: AssetVisibility;
+};
+export type AssetUploadStatusResponseDto = {
+    /** Total bytes received so far for this upload */
+    received: number;
+    /** Current status of the upload session */
+    status: Status;
+    /** Unique identifier for this upload session */
+    uploadId: string;
+};
 export type ExifResponseDto = {
     /** City name */
     city?: string | null;
@@ -1605,6 +1683,15 @@ export type UserConfigTrashDto = {
     /** Enabled */
     enabled: boolean;
 };
+export type UserConfigChunkedUploadDto = {
+    /** Enable chunked/resumable uploads */
+    enabled?: boolean;
+    /** Maximum chunk size in bytes for chunked uploads */
+    maxChunkSize: number;
+};
+export type UserConfigUploadDto = {
+    chunkedUpload: UserConfigChunkedUploadDto;
+};
 export type UserConfigUserDto = {
     /** Delete delay */
     deleteDelay: number;
@@ -1620,6 +1707,7 @@ export type UserConfigDto = {
     server: UserConfigServerDto;
     theme: UserConfigThemeDto;
     trash: UserConfigTrashDto;
+    upload: UserConfigUploadDto;
     user: UserConfigUserDto;
 };
 export type DownloadArchiveDto = {
@@ -2701,6 +2789,10 @@ export type ServerApkLinksDto = {
     x86_64: string;
 };
 export type ServerConfigDto = {
+    /** Whether chunked/resumable uploads are enabled */
+    chunkedUploadEnabled: boolean;
+    /** Maximum chunk size in bytes for chunked uploads */
+    chunkedUploadMaxChunkSize: number;
     /** External domain URL */
     externalDomain: string;
     /** Whether the server has been initialized */
@@ -4716,6 +4808,101 @@ export function getAssetStatistics({ isFavorite, isTrashed, visibility }: {
         isFavorite,
         isTrashed,
         visibility
+    }))}`, {
+        ...opts
+    }));
+}
+/**
+ * Initialize chunked upload
+ */
+export function initUpload({ key, slug, assetUploadInitDto }: {
+    key?: string;
+    slug?: string;
+    assetUploadInitDto: AssetUploadInitDto;
+}, opts?: Oazapfts.RequestOpts) {
+    return oazapfts.ok(oazapfts.fetchJson<{
+        status: 201;
+        data: AssetUploadInitResponseDto;
+    }>(`/assets/upload/init${QS.query(QS.explode({
+        key,
+        slug
+    }))}`, oazapfts.json({
+        ...opts,
+        method: "POST",
+        body: assetUploadInitDto
+    })));
+}
+/**
+ * Cancel chunked upload
+ */
+export function cancelUpload({ key, slug, uploadId }: {
+    key?: string;
+    slug?: string;
+    uploadId: string;
+}, opts?: Oazapfts.RequestOpts) {
+    return oazapfts.ok(oazapfts.fetchText(`/assets/upload/${encodeURIComponent(uploadId)}${QS.query(QS.explode({
+        key,
+        slug
+    }))}`, {
+        ...opts,
+        method: "DELETE"
+    }));
+}
+/**
+ * Upload a chunk
+ */
+export function uploadChunk({ chunkIndex, key, slug, uploadId }: {
+    chunkIndex: number;
+    key?: string;
+    slug?: string;
+    uploadId: string;
+}, opts?: Oazapfts.RequestOpts) {
+    return oazapfts.ok(oazapfts.fetchJson<{
+        status: 201;
+        data: AssetUploadChunkResponseDto;
+    }>(`/assets/upload/${encodeURIComponent(uploadId)}/chunk/${encodeURIComponent(chunkIndex)}${QS.query(QS.explode({
+        key,
+        slug
+    }))}`, {
+        ...opts,
+        method: "POST"
+    }));
+}
+/**
+ * Complete chunked upload
+ */
+export function completeUpload({ key, slug, uploadId, assetUploadCompleteDto }: {
+    key?: string;
+    slug?: string;
+    uploadId: string;
+    assetUploadCompleteDto: AssetUploadCompleteDto;
+}, opts?: Oazapfts.RequestOpts) {
+    return oazapfts.ok(oazapfts.fetchJson<{
+        status: 201;
+        data: AssetMediaResponseDto;
+    }>(`/assets/upload/${encodeURIComponent(uploadId)}/complete${QS.query(QS.explode({
+        key,
+        slug
+    }))}`, oazapfts.json({
+        ...opts,
+        method: "POST",
+        body: assetUploadCompleteDto
+    })));
+}
+/**
+ * Get chunked upload status
+ */
+export function getUploadStatus({ key, slug, uploadId }: {
+    key?: string;
+    slug?: string;
+    uploadId: string;
+}, opts?: Oazapfts.RequestOpts) {
+    return oazapfts.ok(oazapfts.fetchJson<{
+        status: 200;
+        data: AssetUploadStatusResponseDto;
+    }>(`/assets/upload/${encodeURIComponent(uploadId)}/status${QS.query(QS.explode({
+        key,
+        slug
     }))}`, {
         ...opts
     }));
@@ -8098,6 +8285,12 @@ export enum AssetJobName {
     RefreshMetadata = "refresh-metadata",
     RegenerateThumbnail = "regenerate-thumbnail",
     TranscodeVideo = "transcode-video"
+}
+export enum Status {
+    Initialized = "initialized",
+    InProgress = "in-progress",
+    Completed = "completed",
+    Failed = "failed"
 }
 export enum AssetTypeEnum {
     Image = "IMAGE",

@@ -11,6 +11,7 @@ import { tick } from 'svelte';
 import { t } from 'svelte-i18n';
 import { get } from 'svelte/store';
 import { authManager } from '$lib/managers/auth-manager.svelte';
+import { serverConfigManager } from '$lib/managers/server-config-manager.svelte';
 import { uploadManager } from '$lib/managers/upload-manager.svelte';
 import { addAssetsToAlbums } from '$lib/services/album.service';
 import { uploadAssetsStore } from '$lib/stores/upload';
@@ -281,7 +282,8 @@ async function fileUploader({
 
       uploadAssetsStore.updateItem(deviceAssetId, { message: $t('asset_uploading') });
 
-      if (assetFile.size > CHUNKED_UPLOAD_THRESHOLD_BYTES && !authManager.isSharedLink) {
+      const chunkedEnabled = serverConfigManager.value.chunkedUploadEnabled;
+      if (chunkedEnabled && assetFile.size > CHUNKED_UPLOAD_THRESHOLD_BYTES && !authManager.isSharedLink) {
         responseData = await uploadChunked(assetFile, deviceAssetId, isLockedAssets);
       } else {
         const response = await uploadRequest<AssetMediaResponseDto>({

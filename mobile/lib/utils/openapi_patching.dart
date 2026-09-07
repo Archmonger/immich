@@ -32,6 +32,8 @@ final Map<String, Map<String, Object?>> openApiPatches = {
     'mapLightStyleUrl': 'https://tiles.immich.cloud/v1/style/light.json',
     'mapDarkStyleUrl': 'https://tiles.immich.cloud/v1/style/dark.json',
     'minFaces': 3,
+    'chunkedUploadEnabled': true,
+    'chunkedUploadMaxChunkSize': 50 * 1024 * 1024,
   },
   'UserResponseDto': {'profileChangedAt': _now},
   'AssetResponseDto': {'visibility': 'timeline', 'createdAt': _now, 'isEdited': false},

@@ -11,6 +11,8 @@ abstract class ServerConfig with _$ServerConfig {
     required String externalDomain,
     required String mapDarkStyleUrl,
     required String mapLightStyleUrl,
+    required bool chunkedUploadEnabled,
+    required int chunkedUploadMaxChunkSize,
   }) = _ServerConfig;
 
   factory ServerConfig.fromDto(ServerConfigDto dto) => ServerConfig(
@@ -19,5 +21,7 @@ abstract class ServerConfig with _$ServerConfig {
     externalDomain: dto.externalDomain,
     mapDarkStyleUrl: dto.mapDarkStyleUrl,
     mapLightStyleUrl: dto.mapLightStyleUrl,
+    chunkedUploadEnabled: dto.chunkedUploadEnabled,
+    chunkedUploadMaxChunkSize: dto.chunkedUploadMaxChunkSize,
   );
 }

@@ -171,6 +171,8 @@ describe(ServerService.name, () => {
         mapLightStyleUrl: 'https://tiles.immich.cloud/v1/style/light.json',
         maintenanceMode: false,
         minFaces: 3,
+        chunkedUploadEnabled: true,
+        chunkedUploadMaxChunkSize: 50 * 1024 * 1024,
       });
       expect(mocks.systemMetadata.get).toHaveBeenCalled();
     });

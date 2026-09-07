@@ -26,7 +26,6 @@ import {
   AssetUploadInitDto,
   AssetUploadInitResponseDto,
   AssetUploadStatusResponseDto,
-  DEFAULT_UPLOAD_CHUNK_SIZE_BYTES,
   UploadStatus,
 } from 'src/dtos/asset-upload.dto';
 import { AssetDownloadOriginalDto } from 'src/dtos/asset.dto';
@@ -206,12 +205,21 @@ export class AssetMediaService extends BaseService {
       throw new BadRequestException(`Unsupported file type ${dto.filename}`);
     }
 
+    // Chunked uploads are a server-side preference. When disabled, the endpoint
+    // reports that so clients can fall back to the legacy single-request upload.
+    const { upload } = await this.getConfig({ withCache: true });
+    if (!upload.chunkedUpload.enabled) {
+      throw new BadRequestException('Chunked uploads are disabled');
+    }
+
+    const maxChunkSize = upload.chunkedUpload.maxChunkSize;
+
     // Duplicate detection before any bytes are transferred.
     const existing = await this.getUploadAssetIdByChecksum(auth, dto.checksum);
     if (existing) {
       return {
         uploadId: randomUUID(),
-        chunkSize: dto.chunkSize ?? DEFAULT_UPLOAD_CHUNK_SIZE_BYTES,
+        chunkSize: Math.min(dto.chunkSize ?? maxChunkSize, maxChunkSize),
         status: UploadStatus.COMPLETED,
         duplicate: true,
         assetId: existing.id,
@@ -219,7 +227,7 @@ export class AssetMediaService extends BaseService {
     }
 
     const uploadId = randomUUID();
-    const chunkSize = Math.min(dto.chunkSize ?? DEFAULT_UPLOAD_CHUNK_SIZE_BYTES, DEFAULT_UPLOAD_CHUNK_SIZE_BYTES);
+    const chunkSize = Math.min(dto.chunkSize ?? maxChunkSize, maxChunkSize);
 
     // Use the same nested upload folder scheme as the single-request path.
     const folder = StorageCore.getNestedFolder(StorageFolder.Upload, auth.user.id, uploadId);

@@ -24,6 +24,8 @@ class ServerInfoNotifier extends StateNotifier<ServerInfo> {
             externalDomain: '',
             mapLightStyleUrl: 'https://tiles.immich.cloud/v1/style/light.json',
             mapDarkStyleUrl: 'https://tiles.immich.cloud/v1/style/dark.json',
+            chunkedUploadEnabled: true,
+            chunkedUploadMaxChunkSize: 50 * 1024 * 1024,
           ),
           serverDiskInfo: ServerDiskInfo(diskAvailable: "0", diskSize: "0", diskUse: "0", diskUsagePercentage: 0),
           versionStatus: VersionStatus.upToDate,

@@ -11,17 +11,24 @@ import 'package:immich_mobile/constants/constants.dart';
 import 'package:immich_mobile/domain/models/store.model.dart';
 import 'package:immich_mobile/entities/store.entity.dart';
 import 'package:immich_mobile/infrastructure/repositories/network.repository.dart';
+import 'package:immich_mobile/providers/server_info.provider.dart';
 import 'package:immich_mobile/utils/debug_print.dart';
 import 'package:logging/logging.dart';
 
-final uploadRepositoryProvider = Provider((ref) => UploadRepository());
+final uploadRepositoryProvider = Provider((ref) {
+  final chunkedUploadEnabled = ref.watch(
+    serverInfoProvider.select((s) => s.serverConfig.chunkedUploadEnabled),
+  );
+  return UploadRepository(chunkedUploadEnabled: chunkedUploadEnabled);
+});
 
 class UploadRepository {
   final Logger logger = Logger('UploadRepository');
+  final bool chunkedUploadEnabled;
   void Function(TaskStatusUpdate)? onUploadStatus;
   void Function(TaskProgressUpdate)? onTaskProgress;
 
-  UploadRepository() {
+  UploadRepository({this.chunkedUploadEnabled = true}) {
     FileDownloader().registerCallbacks(
       group: kBackupGroup,
       taskStatusCallback: (update) => onUploadStatus?.call(update),
@@ -107,9 +114,11 @@ class UploadRepository {
       return UploadResult.error(errorMessage: 'Unable to read file size: $e');
     }
 
-    // Use the resumable/chunked upload protocol for files larger than the
-    // per-request body limit (e.g. Cloudflare's 100 MB cap).
-    if (fileSize > kChunkedUploadThresholdBytes) {
+    // Use the resumable/chunked upload protocol when the server has it
+    // enabled and the file is larger than the per-request body limit
+    // (e.g. Cloudflare's 100 MB cap). When disabled, fall back to the
+    // legacy single-request upload.
+    if (chunkedUploadEnabled && fileSize > kChunkedUploadThresholdBytes) {
       return _uploadChunked(
         file: file,
         originalFileName: originalFileName,

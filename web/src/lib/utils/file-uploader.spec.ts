@@ -1,13 +1,25 @@
-import { AssetMediaStatus, type AssetMediaResponseDto, type UserAdminResponseDto } from '@immich/sdk';
+import { AssetMediaStatus, type AssetMediaResponseDto, type ServerConfigDto, type UserAdminResponseDto } from '@immich/sdk';
 import { get } from 'svelte/store';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { authManager } from '$lib/managers/auth-manager.svelte';
 import { uploadManager } from '$lib/managers/upload-manager.svelte';
+import { serverConfigManager } from '$lib/managers/server-config-manager.svelte';
+
+vi.mock(import('$lib/managers/server-config-manager.svelte'), () => ({
+  serverConfigManager: {
+    value: { chunkedUploadEnabled: true, chunkedUploadMaxChunkSize: 50 * 1024 * 1024 } as ServerConfigDto,
+    init: vi.fn(),
+    loadServerConfig: vi.fn(),
+  },
+}));
 import { uploadAssetsStore } from '$lib/stores/upload';
 import { UploadState } from '$lib/types';
 import * as utils from '$lib/utils';
 import { preferencesFactory } from '@test-data/factories/preferences-factory';
 import { fileUploadHandler } from './file-uploader';
+
+// Ensure the mocked module is used by accessing it (avoids unused import lint)
+void serverConfigManager;
 
 describe('fileUploader error handling', () => {
   const mockFile = new File(['content'], 'test.jpg', { type: 'image/jpeg' });

@@ -129,6 +129,8 @@ export class ServerService extends BaseService {
       mapLightStyleUrl: config.map.lightStyle,
       maintenanceMode: false,
       minFaces: config.machineLearning.facialRecognition.minFaces,
+      chunkedUploadEnabled: config.upload.chunkedUpload.enabled,
+      chunkedUploadMaxChunkSize: config.upload.chunkedUpload.maxChunkSize,
     };
   }
 
