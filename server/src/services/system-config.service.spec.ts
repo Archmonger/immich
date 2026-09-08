@@ -218,7 +218,7 @@ const updatedConfig = Object.freeze<SystemConfig>({
   upload: {
     chunkedUpload: {
       enabled: true,
-      maxChunkSize: 100 * 1024 * 1024,
+      maxChunkSize: 99 * 1024 * 1024,
     },
   },
   theme: {

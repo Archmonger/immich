@@ -172,7 +172,7 @@ describe(ServerService.name, () => {
         maintenanceMode: false,
         minFaces: 3,
         chunkedUploadEnabled: true,
-        chunkedUploadMaxChunkSize: 100 * 1024 * 1024,
+        chunkedUploadMaxChunkSize: 99 * 1024 * 1024,
       });
       expect(mocks.systemMetadata.get).toHaveBeenCalled();
     });
