@@ -371,7 +371,11 @@ export class AssetMediaService extends BaseService {
     }
   }
 
-  private async destroySession(auth: AuthDto, session: UploadSession, options: { deleteFile?: boolean } = {}): Promise<void> {
+  private async destroySession(
+    auth: AuthDto,
+    session: UploadSession,
+    options: { deleteFile?: boolean } = {},
+  ): Promise<void> {
     await this.uploadSessionRepository.delete(session.uploadId).catch(() => {});
     if (options.deleteFile !== false) {
       await this.storageRepository.unlink(session.path).catch(() => {});
