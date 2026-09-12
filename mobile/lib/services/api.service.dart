@@ -108,6 +108,13 @@ class ApiService {
       throw ApiException(503, "Server is not reachable");
     }
 
+    // Ensure the endpoint points at the Immich API. When no /.well-known/immich
+    // file is found (or it only reports a relative path), the URL provided by the
+    // user is the root of the deployment, so the API lives under the /api path.
+    if (!url.endsWith('/api')) {
+      url = '$url/api';
+    }
+
     // Otherwise, assume the URL provided is the api endpoint
     return url;
   }
